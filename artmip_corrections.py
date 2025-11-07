@@ -311,7 +311,15 @@ def insert_missing_times(
             try:
                 input_xr.sel(time = artmip_xr.time)
             except:
-                raise RuntimeError("ARTMIP time values don't match those of the input; cannot determine how to sensibly modify the time dimension of the ARTMIP dataset.")
+                try:
+                    input_xr = xr.decode_cf(input_xr)
+                    artmip_xr = xr.decode_cf(artmip_xr)
+                    input_xr.sel(time = artmip_xr.time)
+                except:
+                    print("input_xr.time.values =", input_xr.time.values)
+                    print("artmip_xr.time.values =", artmip_xr.time.values)
+                    print(artmip_xr.time)
+                    raise RuntimeError("ARTMIP time values don't match those of the input; cannot determine how to sensibly modify the time dimension of the ARTMIP dataset.")
 
         return needs_correction
 

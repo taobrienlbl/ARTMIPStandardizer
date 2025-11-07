@@ -1,10 +1,18 @@
 """ Converts ARTMIP contributions to a format that conforms to the ARTMIP standard """
 import os
+import glob
+import dask.config
 import xarray as xr
 import collections
 import inspect
 import artmip_corrections
 from dask.diagnostics import ProgressBar
+import dask
+
+# force dask to use a single thread
+# (this avoids an HDF5 corruption issue)
+dask.config.set(scheduler='threads')
+dask.config.set(num_workers=1)
 
 
 class ARTMIPStandardizer:
@@ -19,7 +27,9 @@ class ARTMIPStandardizer:
         auto_apply_corrections = True,
         auto_write_files = True,
         metadata_dict = None,
+        artmip_metadata_dict = None,
         ar_tag_fill_value = None,
+        decode_files_separately = False,
         be_verbose = True,
     ):
         """ Initialize the ARTMIPStandardizer class. 
@@ -50,9 +60,14 @@ class ARTMIPStandardizer:
             auto_write_files       : flags whether to automatically write 
                                      the output files to disk
 
+            decode_files_separately : flags whether to decode each input
+                                        file separately (for files with different time units)
+
             be_verbose             : flags whether to be verbose
 
-            metadata_dict          : a dictionary of metadata values to add 
+            metadata_dict          : a dictionary of metadata values to add to the IVT input files
+
+            artmip_metadata_dict   : a dictionary of metadata values to add to the ARTMIP input files
 
             ar_tag_fill_value      : the fill value for ar_binary_tag
                                      If None is given, no fill value is used.
@@ -79,9 +94,11 @@ class ARTMIPStandardizer:
         self.compression_level = compression_level
         self.auto_apply_corrections = auto_apply_corrections
         self.metadata_dict = metadata_dict
+        self.artmip_metadata_dict = artmip_metadata_dict
         self.auto_load_files = auto_load_files
         self.ar_tag_fill_value = ar_tag_fill_value
         self.auto_write_files = auto_write_files
+        self.decode_files_separately = decode_files_separately
         self.be_verbose = be_verbose
 
         if self.auto_load_files:
@@ -106,24 +123,66 @@ class ARTMIPStandardizer:
     def load_artmip_input_files(self):
         """ Loads the ARTMIP input files; stores as self.artmip_input_xr """
 
-        self.artmip_input_xr = xr.open_mfdataset(
-            self.artmip_input_files,
-            decode_times = False,
-            combine = 'nested',
-            concat_dim='time')
+        if not self.decode_files_separately:
+            self.artmip_input_xr = xr.open_mfdataset(
+                self.artmip_input_files,
+                decode_times = False,
+                data_vars = 'all',
+                combine = 'nested',
+                concat_dim='time')
+
+            # if we were given metadata, apply it to the artmip dataset
+            for var, att_dict in self.artmip_metadata_dict.items():
+                for att, val in att_dict.items():
+                    self.artmip_input_xr[var].attrs[att] = val
+        else:
+            if isinstance(self.artmip_input_files,str):
+                file_list = sorted(glob.glob(self.artmip_input_files))
+            # check if a list was given
+            elif isinstance(self.artmip_input_files, list):
+                file_list = self.artmip_input_files
+            else:
+                raise RuntimeError(f"artmip_input_files must be a glob string or a list of file paths when decode_files_separately is True. A {type(self.artmip_input_files)} was given.")
+
+            # load and decode each file separately
+            xr_list = []
+            for filepath in file_list:
+                tmp_xr = xr.open_dataset(
+                    filepath,
+                    decode_times = False,
+                    )
+                # if we were given metadata, apply it to the artmip dataset
+                for var, att_dict in self.artmip_metadata_dict.items():
+                    for att, val in att_dict.items():
+                        tmp_xr[var].attrs[att] = val
+
+                # decode the time values
+                tmp_xr = xr.decode_cf(tmp_xr)
+
+                xr_list.append(tmp_xr)
+
+            # combine the list of xarrays
+            self.artmip_input_xr = xr.concat(
+                xr_list,
+                dim = 'time',
+                )
+
 
     def load_original_input_files(self):
         """ Loads the original input files; stores as self.original_input_xr """
         self.original_input_xr = xr.open_mfdataset(
             self.original_input_files,
+            data_vars = 'all',
             decode_times = False,
             combine = 'nested',
             concat_dim='time')
 
-        # if we were given metadata, apply it to the input dataset
+        # if we were given metadata, apply it to the artmip dataset
         for var, att_dict in self.metadata_dict.items():
             for att, val in att_dict.items():
                 self.original_input_xr[var].attrs[att] = val
+
+
 
 
     def determine_corrections(self):
