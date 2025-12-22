@@ -5,7 +5,7 @@ import argparse
 import simplempi
 
 # initialize MPI
-smpi = simplempi.simpleMPI()
+smpi = simplempi.simpleMPI(useMPI = False)
 
 def vprint(*args, **kwargs):
     if smpi.rank == 0:
@@ -142,12 +142,14 @@ for exp, alg in my_alg_exp_list:
 
     decode_files_separately = False
 
+    forced_time_range = None
     if alg == "Mattingly":
-        # this algorithm has time coordinate issues that
-        # require decoding files separately
-        decode_files_separately = True
+        # force the times in this algorithm to come from the input dataset
+        # due to decoding issues with the time coordinate
+        if "BHIST" in exp:
+            forced_time_range = ("1990-01-01 00:00:00", "2009-12-31 18:00:00")
         if "BSSP370" in exp:
-            artmip_coord_override_dict = {"time" : {"calendar" : "noleap" }}
+            forced_time_range = ("2080-01-01 00:00:00", "2094-12-31 18:00:00")
 
     smpi.pprint(f"Standardizing {alg}:{exp}")
     ARTMIPStandardizer(
@@ -157,8 +159,9 @@ for exp, alg in my_alg_exp_list:
             algorithm = alg, experiment = exp),
         metadata_dict = coord_override_dict,
         artmip_metadata_dict = artmip_coord_override_dict,
-        decode_files_separately=decode_files_separately,
-        be_verbose=False,
+        decode_files_separately = decode_files_separately,
+        be_verbose = False,
+        forced_time_range = forced_time_range,
     )
 
 smpi.pprint("Done.")

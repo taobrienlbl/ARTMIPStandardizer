@@ -19,6 +19,7 @@ def do_nothing(
     input_xr = None,
     determine_only = False,
     apply_only = False,
+    extra_args = None,
 ):
 '''Pass the ARTMIP dataset through without modification.'''
 
@@ -44,6 +45,8 @@ All correction functions should take four keyword arguments:
                      run
 
     apply_only     : flags whether the correction's apply phase should run
+
+    extra_args     : (optional) a dictionary of extra arguments that might be needed
 
 They should also have a short docstring that defines the action that the correction performs (as a verb-phrase).
 
@@ -86,6 +89,7 @@ def correction(func, add_to_list = True):
         input_xr = None,
         determine_only = False,
         apply_only = False,
+        extra_args = None, # optional
     ):
     '''Pass the ARTMIP dataset through without modification.'''
 
@@ -111,6 +115,8 @@ def correction(func, add_to_list = True):
                          should run
         
         apply_only     : flags whether the correction's apply phase should run
+
+        extra_args     : (optional) a dictionary of extra arguments that might be needed
 
     They should also have a short docstring that defines the action that the
     correction performs (as a verb-phrase).
@@ -154,6 +160,7 @@ def swap_lon_convention(
     input_xr = None,
     determine_only = False,
     apply_only = False,
+    extra_args = None,
     ):
     """ Swap the longitude convention from -180-180 or 0-360. """
 
@@ -215,7 +222,8 @@ def rotate_longitudes(
     artmip_xr = None,
     input_xr = None,
     determine_only = False,
-    apply_only = False
+    apply_only = False,
+    extra_args = None,
     ):
     """ Rotate through the longitude dimension to match the input dataset. """
 
@@ -299,6 +307,7 @@ def insert_missing_times(
     input_xr = None,
     determine_only = False,
     apply_only = False,
+    extra_args = None,
     ):
     """ Insert missing timesteps (fills with _FillValue). """
     if determine_only:
@@ -316,9 +325,6 @@ def insert_missing_times(
                     artmip_xr = xr.decode_cf(artmip_xr)
                     input_xr.sel(time = artmip_xr.time)
                 except:
-                    print("input_xr.time.values =", input_xr.time.values)
-                    print("artmip_xr.time.values =", artmip_xr.time.values)
-                    print(artmip_xr.time)
                     raise RuntimeError("ARTMIP time values don't match those of the input; cannot determine how to sensibly modify the time dimension of the ARTMIP dataset.")
 
         return needs_correction
@@ -339,6 +345,7 @@ def override_time_values_and_metadata(
     input_xr = None,
     determine_only = False,
     apply_only = False,
+    extra_args = None,
     ):
     """ Override the time values and metadata with that from the input. """
 
@@ -380,6 +387,7 @@ def override_coordinate_metadata(
     input_xr = None,
     determine_only = False,
     apply_only = False,
+    extra_args = None,
     ):
     """ Override the lat/lon coordinate metadata with that from the input. """
     check_coords = ["lat", "lon"]
@@ -410,3 +418,76 @@ def override_coordinate_metadata(
                 output_xr[coord].attrs[att] = input_xr[coord].attrs[att]
 
         return output_xr
+
+@correction
+def force_time_range(
+    artmip_xr = None,
+    input_xr = None,
+    determine_only = False,
+    apply_only = False,
+    extra_args = None,
+    ):
+    """ Force the time range to a specified start and end time. """
+
+    # decode the input dataset times
+    input_xr_tmp = xr.decode_cf(input_xr)
+
+    if determine_only:
+        needs_correction = False
+
+        # check that extra_args is not None
+        if extra_args is None:
+            return False
+
+        # check that the times exist in the input dataset
+        try:
+            input_xr_tmp.sel(time = extra_args['start_time'])
+        except KeyError:
+            raise RuntimeError(f"The specified start_time "
+            f"{extra_args['start_time']} does not exist in the input dataset.")
+        try:
+            input_xr_tmp.sel(time = extra_args['end_time'])
+        except KeyError:
+            raise RuntimeError(f"The specified end_time "
+            f"{extra_args['end_time']} does not exist in the input dataset.")
+        
+        # check that the length of the forced time dimension matches the artmip time dimension
+        input_time_slice = input_xr_tmp.sel(
+            time = slice(
+                extra_args['start_time'],
+                extra_args['end_time']))
+        
+        needs_correction = True
+        return needs_correction
+    if apply_only:
+        # check that extra_args is not None
+        if extra_args is None:
+            raise RuntimeError("The `force_time_range` correction requires"
+            " extra_args to be specified as (start, end).")
+
+        # find the indices of the start and end times
+        start_value = input_xr_tmp.sel(time = extra_args['start_time']).time.values
+        end_value = input_xr_tmp.sel(time = extra_args['end_time']).time.values
+        start_index = (input_xr_tmp.time.values == start_value).argmax().item()
+        end_index = (input_xr_tmp.time.values == end_value).argmax().item()
+
+        # extract the time slice from the input dataset
+        input_time_slice = input_xr.isel(time = slice(start_index, end_index + 1))
+
+        # override the time coordinate in the artmip dataset
+        # with that from the input dataset
+        output_xr = artmip_xr.copy()
+
+        # force the length of the artmip time dimension to match
+        if len(input_time_slice.time) != len(output_xr.time):
+            output_xr = output_xr.isel(
+                time = slice(0, len(input_time_slice.time)))
+
+        output_xr = output_xr.assign_coords(time = input_time_slice.time)
+
+        # ensure the metadata is also copied over
+        output_xr['time'].attrs = input_time_slice['time'].attrs
+
+        return output_xr
+
+

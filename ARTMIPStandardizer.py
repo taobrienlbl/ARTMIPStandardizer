@@ -30,6 +30,7 @@ class ARTMIPStandardizer:
         artmip_metadata_dict = None,
         ar_tag_fill_value = None,
         decode_files_separately = False,
+        forced_time_range = None,
         be_verbose = True,
     ):
         """ Initialize the ARTMIPStandardizer class. 
@@ -62,6 +63,9 @@ class ARTMIPStandardizer:
 
             decode_files_separately : flags whether to decode each input
                                         file separately (for files with different time units)
+
+            forced_time_range      : a tuple of (start_time, end_time) to force the output;
+                                     these times will be read from the input dataset
 
             be_verbose             : flags whether to be verbose
 
@@ -100,6 +104,7 @@ class ARTMIPStandardizer:
         self.auto_write_files = auto_write_files
         self.decode_files_separately = decode_files_separately
         self.be_verbose = be_verbose
+        self.forced_time_range = forced_time_range
 
         if self.auto_load_files:
             # read the ARTMIP input files
@@ -154,6 +159,7 @@ class ARTMIPStandardizer:
                 # if we were given metadata, apply it to the artmip dataset
                 for var, att_dict in self.artmip_metadata_dict.items():
                     for att, val in att_dict.items():
+                        print(f"Applying metadata to {var} : {att} = {val}")
                         tmp_xr[var].attrs[att] = val
 
                 # decode the time values
@@ -191,12 +197,34 @@ class ARTMIPStandardizer:
         for func_name, correction_func in \
             artmip_corrections.all_corrections.items():
 
+            extra_args = None
+
+            if func_name == "force_time_range":
+                if self.forced_time_range is not None:
+                    assert len(self.forced_time_range) == 2, \
+                        "forced_time_range must be a tuple of (start_time, end_time)"
+
+                    extra_args = dict(
+                        start_time = self.forced_time_range[0],
+                        end_time = self.forced_time_range[1],
+                    )
+
+            # skip inserting missing timesteps if we are forcing a time range
+            # skip override_time_values_and_metadata too
+            if func_name == "insert_missing_times" and \
+                self.forced_time_range is not None:
+                continue
+            if func_name == "override_time_values_and_metadata" and \
+                self.forced_time_range is not None:
+                continue
+
             # run through each possible correction
             # and determine if it should be applied
             if correction_func(
                 artmip_xr = self.artmip_input_xr,
                 input_xr = self.original_input_xr,
-                determine_only = True) \
+                determine_only = True,
+                extra_args = extra_args) \
                     == True:
 
                 self.__add_correction_to_list__(
@@ -212,20 +240,31 @@ class ARTMIPStandardizer:
         # set the current xarray dataset
         current_xr = self.artmip_input_xr
 
+
         for correction, correction_func in \
             self.corrections.items():
+
+            extra_args = None
+            if correction == "force_time_range":
+                if self.forced_time_range is not None:
+                    extra_args = dict(
+                        start_time = self.forced_time_range[0],
+                        end_time = self.forced_time_range[1],
+                    )
 
             # run through each correction in the list
             # and apply it
             output_xr = correction_func(
                 artmip_xr = current_xr,
                 input_xr = self.original_input_xr,
-                apply_only = True)
+                apply_only = True,
+                extra_args = extra_args,
+                )
 
             # use this xarray dataset for the next correction
             current_xr = output_xr
 
-        self.output_xr = output_xr
+        self.output_xr = current_xr
 
 
     def __add_correction_to_list__(self, func_name, func, func_desc = ""):
