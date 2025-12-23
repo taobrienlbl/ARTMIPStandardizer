@@ -48,6 +48,7 @@ algorithms=[ \
   "Mundhenk_v4",
   "PIKART_v1.1",
   "Wille",
+  "Victoire_LE2_relative",
     ]
 
 def list_algs_and_quit():
